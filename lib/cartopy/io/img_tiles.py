@@ -30,14 +30,16 @@ using tiles in this way can be found at the
 
 from __future__ import (absolute_import, division, print_function)
 
-from abc import ABCMeta, abstractmethod
 import concurrent.futures
+import os
 import warnings
+from abc import ABCMeta, abstractmethod
+from pathlib import Path
 
-from PIL import Image
-import shapely.geometry as sgeom
 import numpy as np
+import shapely.geometry as sgeom
 import six
+from PIL import Image
 
 import cartopy.crs as ccrs
 
@@ -81,7 +83,7 @@ class GoogleWTS(six.with_metaclass(ABCMeta, object)):
                     img, x, y, origin = future.result()
                     tiles.append([img, x, y, origin])
                 except IOError:
-                    pass
+                    raise
 
         img, extent, origin = _merge_tiles(tiles)
         return img, extent, origin
@@ -174,14 +176,33 @@ class GoogleWTS(six.with_metaclass(ABCMeta, object)):
         pass
 
     def get_image(self, tile):
-        if six.PY3:
-            from urllib.request import urlopen
-        else:
-            from urllib2 import urlopen
+        assert six.PY3
+        import urllib
+        from urllib.request import urlopen
+        from urllib.parse import urlsplit
 
         url = self._image_url(tile)
 
-        fh = urlopen(url)
+        # Check if we have already dowloaded the file
+        cache_dir = os.path.join(Path.home(), ".cache", "cartopy")
+        os.makedirs(cache_dir, exist_ok=True)
+
+        cached_file_path = os.path.join(cache_dir, (self.__class__.__name__ + urlsplit(url).path.replace('/', '-')))
+        if os.path.exists(cached_file_path):
+            fh = open(cached_file_path, "rb")
+        else:
+            req = urllib.request.Request(
+                url,
+                data=None,
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36'
+                }
+            )
+            fh = urlopen(req)
+            with open(cached_file_path, "wb") as fp:
+                fp.write(fh.read())
+            fh = open(cached_file_path, "rb")
+
         im_data = six.BytesIO(fh.read())
         fh.close()
         img = Image.open(im_data)
@@ -214,7 +235,7 @@ World_Shaded_Relief/MapServer/tile/{z}/{y}/{x}.jpg'``
         self.url = url
         if style not in styles:
             msg = "Invalid style '%s'. Valid styles: %s" % \
-                (style, ", ".join(styles))
+                  (style, ", ".join(styles))
             raise ValueError(msg)
         self.style = style
 
@@ -299,6 +320,7 @@ class Stamen(GoogleWTS):
     attribute this imagery.
 
     """
+
     def __init__(self, style='toner', desired_tile_form='RGB'):
         super(Stamen, self).__init__(desired_tile_form=desired_tile_form)
         self.style = style
@@ -333,6 +355,7 @@ class StamenTerrain(Stamen):
 
 
     """
+
     def __init__(self):
         warnings.warn(
             "The StamenTerrain class was deprecated in v0.17. "
@@ -351,6 +374,7 @@ class MapboxTiles(GoogleWTS):
     For terms of service, see https://www.mapbox.com/tos/.
 
     """
+
     def __init__(self, access_token, map_id):
         """
         Set up a new Mapbox tiles instance.
@@ -389,6 +413,7 @@ class MapboxStyleTiles(GoogleWTS):
     For terms of service, see https://www.mapbox.com/tos/.
 
     """
+
     def __init__(self, access_token, username, map_id):
         """
         Set up a new instance to retrieve tiles from a Mapbox style.
@@ -434,6 +459,7 @@ class QuadtreeTiles(GoogleWTS):
     where the length of the quatree is the zoom level in Google Tile terms.
 
     """
+
     def _image_url(self, tile):
         url = ('http://ecn.dynamic.t1.tiles.virtualearth.net/comp/'
                'CompositionHandler/{tile}?mkt=en-'
@@ -527,6 +553,7 @@ class OrdnanceSurvey(GoogleWTS):
     For the API framework agreement, see
     https://developer.ordnancesurvey.co.uk/os-api-framework-agreement.
     """
+
     # API Documentation: https://apidocs.os.uk/docs/os-maps-wmts
     def __init__(self, apikey, layer='Road', desired_tile_form='RGB'):
         """
